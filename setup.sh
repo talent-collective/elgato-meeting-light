@@ -22,13 +22,16 @@ if [[ -z "$PYTHON" ]]; then
 fi
 echo "Python: $PYTHON"
 
-# Install dependencies
+# Install dependencies (resilient to PEP 668 "externally-managed" Python)
 echo "Installing dependencies..."
-"$PYTHON" -m pip install -r "$SCRIPT_DIR/requirements.txt" --quiet
+"$PYTHON" -m pip install -r "$SCRIPT_DIR/requirements.txt" --quiet 2>/dev/null \
+    || "$PYTHON" -m pip install --user -r "$SCRIPT_DIR/requirements.txt" --quiet 2>/dev/null \
+    || "$PYTHON" -m pip install --user --break-system-packages -r "$SCRIPT_DIR/requirements.txt" --quiet
 
-# Smoke test
+# Smoke test — non-fatal: a powered-off light shouldn't block the install,
+# the service keeps watching for the light once it's running.
 echo "Running smoke test (make sure your Key Light is powered on)..."
-"$PYTHON" "$MAIN_SCRIPT" --test
+"$PYTHON" "$MAIN_SCRIPT" --test || echo "  (smoke test had an issue — the service will keep retrying once running)"
 
 # Write LaunchAgent plist
 mkdir -p "$HOME/Library/LaunchAgents"

@@ -9,7 +9,7 @@ Works on **Windows** and **macOS**. No configuration needed; the light is discov
 | Part | Mechanism |
 |------|-----------|
 | Camera detection (Windows) | Polls the Windows privacy registry (`CapabilityAccessManager`) every 2 seconds — the same signal that drives the OS camera indicator dot |
-| Camera detection (macOS) | Checks for `VDCAssistant` / `AppleCameraAssistant` processes, which macOS spawns whenever any app activates the camera |
+| Camera detection (macOS) | Reads Control Center's privacy-indicator log (`sensor-indicators` → `"Active activity attributions changed to […]"`) — the same signal that drives the green camera dot. A `cam:` entry means the camera is live; a mic-only session is ignored |
 | Light discovery | mDNS/Bonjour (`_elg._tcp.local.`) — finds the light automatically, no IP address needed |
 | Light control | `PUT http://<light-ip>:9123/elgato/lights` — toggles on/off without changing your brightness or temperature preset |
 
@@ -72,7 +72,7 @@ The process restarts automatically if it crashes.
 
 - Brightness and color temperature are never changed by this tool — your Control Center preset is always preserved.
 - If the light is powered off or unplugged, the script will keep watching for it to reappear on the network and reconnect automatically.
-- On macOS, camera detection relies on system process names that have remained stable across recent OS versions, but may need updating on future macOS releases.
+- On macOS, camera detection uses Control Center's privacy-indicator signal (the green-dot source), so it reflects the camera's true state rather than a helper process that can linger after the camera is released. Requires macOS 12+.
 
 ## License
 
