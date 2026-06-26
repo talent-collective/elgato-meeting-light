@@ -10,6 +10,7 @@ import logging
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -82,32 +83,99 @@ def _is_camera_in_use_windows() -> bool:
     return False
 
 
-def _is_camera_in_use_macos() -> bool:
-    """Check macOS camera usage via camera assistant processes.
+class _MacCameraMonitor:
+    """Track macOS camera usage via the Control Center privacy indicator.
 
-    macOS spawns VDCAssistant (Intel) or AppleCameraAssistant (Apple Silicon)
-    whenever any app activates the camera. If either process is running, the
-    camera LED is on.
+    macOS publishes the exact signal that drives the green camera dot to the
+    unified log: ControlCenter logs "Active activity attributions changed to
+    [...]" whenever a sensor (camera/mic) turns on or off. A camera entry looks
+    like `cam:<bundle-id>`; mic entries are `mic:<bundle-id>`. The list is empty
+    (`[]`) when nothing is active.
+
+    This is authoritative — unlike the old VDCAssistant-process check, which
+    stays alive for minutes after the camera is released and produced false
+    positives (light stuck on). We seed the current state once with `log show`,
+    then keep it current by tailing `log stream` on a daemon thread.
     """
-    for name in ("VDCAssistant", "AppleCameraAssistant"):
+
+    LOG = "/usr/bin/log"
+    PREDICATE = (
+        'subsystem == "com.apple.controlcenter" AND '
+        'category == "sensor-indicators" AND '
+        'eventMessage BEGINSWITH "Active activity attributions changed to "'
+    )
+    _MARKER = "changed to "
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._in_use = self._seed_state()
+        t = threading.Thread(target=self._stream_forever, daemon=True)
+        t.start()
+
+    @classmethod
+    def _line_has_camera(cls, line: str) -> Optional[bool]:
+        """True/False if `line` is an attribution-change event, else None."""
+        idx = line.find(cls._MARKER)
+        if idx == -1:
+            return None
+        return "cam:" in line[idx + len(cls._MARKER):]
+
+    def _seed_state(self) -> bool:
+        """Determine the current state from the most recent recent log event."""
         try:
-            result = subprocess.run(
-                ["pgrep", "-x", name],
-                capture_output=True,
-                timeout=2,
-            )
-            if result.returncode == 0:
-                return True
-        except Exception:
-            pass
-    return False
+            out = subprocess.run(
+                [self.LOG, "show", "--last", "30m", "--style", "compact",
+                 "--predicate", self.PREDICATE],
+                capture_output=True, text=True, timeout=20,
+            ).stdout
+        except Exception as exc:
+            log.warning(f"Camera state seed failed ({exc}); assuming off")
+            return False
+        state = False  # no event in the window => idle
+        for line in out.splitlines():
+            parsed = self._line_has_camera(line)
+            if parsed is not None:
+                state = parsed  # last transition wins
+        return state
+
+    def _stream_forever(self) -> None:
+        """Tail the log, updating state on each transition. Reconnects if it dies."""
+        while True:
+            try:
+                proc = subprocess.Popen(
+                    [self.LOG, "stream", "--style", "compact",
+                     "--predicate", self.PREDICATE],
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                    text=True, bufsize=1,
+                )
+                for line in proc.stdout:
+                    parsed = self._line_has_camera(line)
+                    if parsed is not None:
+                        with self._lock:
+                            self._in_use = parsed
+            except Exception as exc:
+                log.warning(f"Camera log stream dropped ({exc}); reconnecting")
+            # Stream exited: re-seed (we may have missed a transition) and retry.
+            with self._lock:
+                self._in_use = self._seed_state()
+            time.sleep(2)
+
+    def is_in_use(self) -> bool:
+        with self._lock:
+            return self._in_use
+
+
+_mac_monitor: Optional[_MacCameraMonitor] = None
 
 
 def is_camera_in_use() -> bool:
     if sys.platform == "win32":
         return _is_camera_in_use_windows()
     elif sys.platform == "darwin":
-        return _is_camera_in_use_macos()
+        global _mac_monitor
+        if _mac_monitor is None:
+            _mac_monitor = _MacCameraMonitor()
+        return _mac_monitor.is_in_use()
     else:
         raise NotImplementedError(f"Unsupported platform: {sys.platform}")
 
