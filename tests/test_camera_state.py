@@ -19,7 +19,7 @@ from camera_state import (  # noqa: E402
     replay_log_lines,
 )
 
-FIXTURE = Path(__file__).parent / "fixtures" / "macos-camera.log"
+FIXTURE = Path(__file__).parent / "fixtures" / "macos-camera-sample.txt"
 
 # Verbatim macOS 26.5 lines (Zoom on, empty-dictionary release, Photo Booth).
 TAHOE_ON = (

@@ -73,7 +73,7 @@ Install runs one sync to that camera state. It does not blink the light on.
 Replay captured macOS log lines (works on any OS):
 
 ```bash
-python3 main.py --sample-log tests/fixtures/macos-camera.log
+python3 main.py --sample-log tests/fixtures/macos-camera-sample.txt
 ```
 
 The fixture includes a macOS 26.5 Zoom "camera on" line, the macOS 26 empty-dictionary "camera off" line `[:]`, Sonoma/Sequoia `cam:` and `mic:` attributions, and a hardware power-on echo that must not turn the light back on.

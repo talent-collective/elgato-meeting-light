@@ -570,7 +570,7 @@ def main() -> None:
     if sys.platform not in ("darwin", "win32"):
         raise SystemExit(
             "Live camera detection supports macOS and Windows. "
-            "Replay a capture with --sample-log tests/fixtures/macos-camera.log"
+            "Replay a capture with --sample-log tests/fixtures/macos-camera-sample.txt"
         )
 
     try:
