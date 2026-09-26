@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Install or reinstall the Elgato meeting light on macOS.
-# Safe to run again: stop the existing agent, replace it, blink the light
-# on then off, and leave the light matched to the camera.
+# Dependencies are installed before the existing agent is stopped, so a
+# failed pip leaves the previous agent running.
 set -euo pipefail
 
 PLIST_LABEL="com.elgato-meeting-light"
@@ -67,12 +67,8 @@ fi
 echo "Python: ${BOOTSTRAP}"
 echo "Installing into ${SOURCE_DIR}"
 
-# Stop the previous agent before the connectivity check. The old build treats
-# VDCAssistant as "camera on" and would turn the light back on after the test.
-DOMAIN="gui/$(id -u)"
-echo "Stopping any existing ${PLIST_LABEL} agent..."
-stop_agent
-sleep 0.3
+# Until the agent is stopped, a failure here leaves the previous install running.
+trap 'echo "Not installed; your previous install is unchanged. Rerun setup.sh." >&2' ERR
 
 "${BOOTSTRAP}" -m venv "${SOURCE_DIR}/.venv"
 VENV_PY="${SOURCE_DIR}/.venv/bin/python"
@@ -81,6 +77,16 @@ if ! "${VENV_PY}" -m pip --version >/dev/null 2>&1; then
 fi
 "${VENV_PY}" -m pip install --upgrade pip >/dev/null 2>&1 || true
 "${VENV_PY}" -m pip install -r "${SOURCE_DIR}/requirements.txt"
+
+trap - ERR
+
+# Stop the previous agent only after install succeeded, and before --test.
+# The old build treats VDCAssistant as "camera on" and would turn the light
+# back on after the connectivity check.
+DOMAIN="gui/$(id -u)"
+echo "Stopping any existing ${PLIST_LABEL} agent..."
+stop_agent
+sleep 0.3
 
 mkdir -p "${HOME}/Library/LaunchAgents"
 "${VENV_PY}" - "${PLIST_PATH}" "${PLIST_LABEL}" "${VENV_PY}" "${SOURCE_DIR}/main.py" "${SOURCE_DIR}" "${LAUNCHD_OUT}" "${LAUNCHD_ERR}" <<'PY'

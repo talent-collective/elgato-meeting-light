@@ -103,6 +103,28 @@ class SnapshotTests(unittest.TestCase):
         errors = [line for line in captured.output if "CoreMediaIO" in line]
         self.assertEqual(len(errors), 1)
 
+    def test_attribute_error_while_loading_is_off_logged_once_and_does_not_raise(self):
+        def boom():
+            raise AttributeError("CMIOObjectGetPropertyDataSize")
+
+        original_load = camera_macos.load_coremediaio
+        original_platform = camera_macos.sys.platform
+        camera_macos._error_logged = False
+        camera_macos.load_coremediaio = boom
+        camera_macos.sys.platform = "darwin"
+        try:
+            with self.assertLogs("elgato-meeting-light", level="ERROR") as captured:
+                first = is_camera_in_use_macos()
+                second = is_camera_in_use_macos()
+        finally:
+            camera_macos.load_coremediaio = original_load
+            camera_macos.sys.platform = original_platform
+            camera_macos._error_logged = False
+        self.assertFalse(first)
+        self.assertFalse(second)
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn("AttributeError", captured.output[0])
+
     def test_probe_line_for_idle_busy_and_failure(self):
         idle = format_probe_line(CameraSnapshot(False, (4, 5), ()))
         busy = format_probe_line(CameraSnapshot(True, (4, 5), (5,)))

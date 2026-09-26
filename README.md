@@ -6,19 +6,27 @@ Works on **macOS** and **Windows**. The light is discovered on the local network
 
 ## Install or reinstall on a Mac
 
-From a checkout of this repo:
+Fresh install:
 
 ```bash
+git clone https://github.com/talent-collective/elgato-meeting-light.git
+cd elgato-meeting-light
 bash setup.sh
 ```
 
-Running that again is safe. It stops the existing LaunchAgent, replaces it, blinks the light on then off to check the connection, and leaves the light matched to the camera.
-
-If you already have the repo at `~/elgato-meeting-light/elgato-meeting-light`:
+Update or reinstall, from the install folder:
 
 ```bash
-cd ~/elgato-meeting-light/elgato-meeting-light && git fetch origin cursor/fix-macos-camera-detection-ad96 && git checkout -B cursor/fix-macos-camera-detection-ad96 origin/cursor/fix-macos-camera-detection-ad96 && bash setup.sh
+git pull && bash setup.sh
 ```
+
+The install folder is the LaunchAgent working directory:
+
+```bash
+plutil -extract WorkingDirectory raw ~/Library/LaunchAgents/com.elgato-meeting-light.plist
+```
+
+Running `setup.sh` again is safe. It installs dependencies first, then replaces the LaunchAgent, blinks the light on then off to check the connection, and leaves the light matched to the camera.
 
 Uninstall: `bash setup.sh --uninstall`
 

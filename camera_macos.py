@@ -237,19 +237,26 @@ def device_is_running(lib: ctypes.CDLL, device_id: int) -> bool:
 
 
 def take_camera_snapshot() -> CameraSnapshot:
-    """Query CoreMediaIO. On any failure the snapshot says the camera is off."""
+    """Query CoreMediaIO. On any failure the snapshot says the camera is off.
+
+    Load, bind, and the property queries are all inside one handler.
+    A missing symbol (AttributeError) must not escape: KeepAlive would
+    restart the agent in a loop and leave the light where it was.
+    """
     if sys.platform != "darwin":
         return CameraSnapshot(
             False, (), (), "CoreMediaIO is only available on macOS"
         )
     try:
         lib = load_coremediaio()
-    except OSError as exc:
-        return CameraSnapshot(False, (), (), str(exc))
-    return snapshot_from_queries(
-        lambda: list_device_ids(lib),
-        lambda device_id: device_is_running(lib, device_id),
-    )
+        return snapshot_from_queries(
+            lambda: list_device_ids(lib),
+            lambda device_id: device_is_running(lib, device_id),
+        )
+    except Exception as exc:
+        return CameraSnapshot(
+            False, (), (), "%s: %s" % (type(exc).__name__, exc)
+        )
 
 
 _error_logged = False
