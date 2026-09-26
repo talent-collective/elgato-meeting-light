@@ -3,9 +3,11 @@
 Elgato Key Light meeting controller.
 
 Turns the Key Light on when the camera is actually in use and off when it is
-not. On macOS the camera check is CoreMediaIO's
-kCMIODevicePropertyDeviceIsRunningSomewhere, not pgrep of VDCAssistant or
-AppleCameraAssistant — those processes stay running while the camera is off.
+not. If that on stretch lasts more than four hours, the light is turned off
+until the camera goes off and comes back on. On macOS the camera check is
+CoreMediaIO's kCMIODevicePropertyDeviceIsRunningSomewhere, not pgrep of
+VDCAssistant or AppleCameraAssistant — those processes stay running while the
+camera is off.
 """
 
 from __future__ import annotations
@@ -24,6 +26,7 @@ from typing import List, Optional
 # import; requirements.txt pins urllib3<2, and this hides a leftover warning.
 warnings.filterwarnings("ignore", message=r"urllib3 v2 only supports OpenSSL")
 
+from auto_off import AUTO_OFF_MESSAGE, AutoOff
 from camera_macos import (
     format_probe_line,
     is_camera_in_use_macos,
@@ -267,42 +270,66 @@ def run_test(listener: KeyLightListener) -> None:
             )
 
 
-def run_forever(listener: KeyLightListener, dry_run: bool) -> None:
+def run_forever(
+    listener: KeyLightListener,
+    dry_run: bool,
+    *,
+    camera_in_use=None,
+    apply_light=None,
+    clock=time.time,
+    sleep=time.sleep,
+    max_polls: Optional[int] = None,
+) -> None:
+    """Poll the camera and drive the light.
+
+    ``clock`` is wall time (``time.time``), injected so tests can move it.
+    ``max_polls`` stops the loop for tests; the agent leaves it unset.
+    """
+    if camera_in_use is None:
+        camera_in_use = is_camera_in_use
+    if apply_light is None:
+        apply_light = set_light
+    limiter = AutoOff(clock=clock)
     actual_on: Optional[bool] = None
     reported: Optional[bool] = None
+    polls = 0
     try:
-        while True:
-            desired_on = is_camera_in_use()
-            if desired_on != reported:
+        while max_polls is None or polls < max_polls:
+            polls += 1
+            camera_on = camera_in_use()
+            command = limiter.decide(camera_on)
+            if command.auto_off:
+                log.info("%s", AUTO_OFF_MESSAGE)
+            if camera_on != reported:
                 if reported is None:
-                    log.info("Initial camera state: %s", "on" if desired_on else "off")
+                    log.info("Initial camera state: %s", "on" if camera_on else "off")
                 else:
                     log.info(
                         "Camera state changed: %s -> %s",
                         "on" if reported else "off",
-                        "on" if desired_on else "off",
+                        "on" if camera_on else "off",
                     )
-                reported = desired_on
+                reported = camera_on
 
             if listener.ip is None:
-                time.sleep(5)
+                sleep(5)
                 continue
 
-            if desired_on != actual_on:
-                light_word = "ON" if desired_on else "OFF"
+            if command.on != actual_on:
+                light_word = "ON" if command.on else "OFF"
                 if dry_run:
                     log.info("Dry run: would turn light %s", light_word)
-                    actual_on = desired_on
-                elif set_light(listener.ip, listener.port, on=desired_on):
+                    actual_on = command.on
+                elif apply_light(listener.ip, listener.port, command.on):
                     log.info("Light %s", light_word)
-                    actual_on = desired_on
+                    actual_on = command.on
                 else:
                     actual_on = None  # retry next cycle
-            time.sleep(POLL_INTERVAL)
+            sleep(POLL_INTERVAL)
     except KeyboardInterrupt:
         log.info("Shutting down")
         if listener.ip and actual_on and not dry_run:
-            set_light(listener.ip, listener.port, on=False)
+            apply_light(listener.ip, listener.port, False)
 
 
 def main() -> None:
