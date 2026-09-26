@@ -76,11 +76,12 @@ Write-Host "`nInstalling Python dependencies..."
 if ($LASTEXITCODE -ne 0) { Write-Error "pip install failed"; exit 1 }
 Write-Host "Dependencies installed."
 
-# --- Smoke test ---
-Write-Host "`nRunning smoke test (make sure your Key Light is powered on)..."
+# --- Connectivity check ---
+# Blinks the light on then off, then leaves it matched to the camera.
+Write-Host "`nChecking the light (on, then off), then matching it to the camera..."
 & $PythonExe $MainScript --test
 if ($LASTEXITCODE -ne 0) {
-    Write-Warning "Smoke test reported issues. Check elgato-light.log for details."
+    Write-Warning "Light check reported issues. Check elgato-light.log for details."
     Write-Host "Continuing with task registration anyway."
 }
 

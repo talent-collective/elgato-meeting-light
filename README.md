@@ -1,40 +1,12 @@
 # elgato-meeting-light
 
-Automatically turns your Elgato Key Light on when your camera activates and off when it deactivates — no manual toggling during calls.
+Turns an Elgato Key Light on when your camera is in use and off when it is not.
 
-Works on **Windows** and **macOS**. No configuration needed; the light is discovered automatically on your local network.
+Works on **macOS** and **Windows**. The light is discovered on the local network. Brightness and color temperature are left alone.
 
-## How it works
+## Install or reinstall on a Mac
 
-| Part | Mechanism |
-|------|-----------|
-| Camera detection (Windows) | Polls the Windows privacy registry (`CapabilityAccessManager`) every 2 seconds — the same signal that drives the OS camera indicator dot |
-| Camera detection (macOS) | Checks for `VDCAssistant` / `AppleCameraAssistant` processes, which macOS spawns whenever any app activates the camera |
-| Light discovery | mDNS/Bonjour (`_elg._tcp.local.`) — finds the light automatically, no IP address needed |
-| Light control | `PUT http://<light-ip>:9123/elgato/lights` — toggles on/off without changing your brightness or temperature preset |
-
-## Requirements
-
-- Python 3.8+
-- Elgato Key Light or Key Light Air
-- Elgato Control Center installed and running (it advertises the light on your network)
-
-## Installation
-
-### Windows
-
-```powershell
-git clone https://github.com/talent-collective/elgato-meeting-light.git
-cd elgato-meeting-light
-.\setup.ps1
-```
-
-To uninstall:
-```powershell
-.\setup.ps1 -Uninstall
-```
-
-### macOS
+Fresh install:
 
 ```bash
 git clone https://github.com/talent-collective/elgato-meeting-light.git
@@ -42,37 +14,79 @@ cd elgato-meeting-light
 bash setup.sh
 ```
 
-To uninstall:
-```bash
-bash setup.sh --uninstall
-```
-
-## Manual usage
+Update or reinstall, from the install folder:
 
 ```bash
-# Smoke test — discovers the light and toggles it once
-python main.py --test
-
-# Run in the foreground
-python main.py
+git pull && bash setup.sh
 ```
 
-Logs are written to `elgato-light.log` in the project directory.
+The install folder is the LaunchAgent working directory:
 
-## Startup behavior
+```bash
+plutil -extract WorkingDirectory raw ~/Library/LaunchAgents/com.elgato-meeting-light.plist
+```
 
-| Platform | Mechanism |
-|----------|-----------|
-| Windows | Registry `HKCU\...\Run` key (no admin required) |
-| macOS | LaunchAgent in `~/Library/LaunchAgents/` |
+Running `setup.sh` again is safe. It installs dependencies first, then replaces the LaunchAgent, blinks the light on then off to check the connection, and leaves the light matched to the camera.
 
-The process restarts automatically if it crashes.
+Uninstall: `bash setup.sh --uninstall`
 
-## Notes
+| | |
+|---|---|
+| LaunchAgent | `com.elgato-meeting-light` |
+| Plist | `~/Library/LaunchAgents/com.elgato-meeting-light.plist` |
+| Log | `elgato-light.log` in the project directory |
+| Startup errors | `elgato-light.launchd.err.log` in the project directory |
 
-- Brightness and color temperature are never changed by this tool — your Control Center preset is always preserved.
-- If the light is powered off or unplugged, the script will keep watching for it to reappear on the network and reconnect automatically.
-- On macOS, camera detection relies on system process names that have remained stable across recent OS versions, but may need updating on future macOS releases.
+The agent loads at login (`RunAtLoad`) and restarts if it exits (`KeepAlive`). It runs the checkout's `.venv` Python, so launchd does not depend on your shell `PATH`.
+
+Watch it:
+
+```bash
+tail -f elgato-light.log
+```
+
+Lines look like `Initial camera state: off`, `Camera state changed: off -> on`, and `Light ON` / `Light OFF`.
+
+Check the live camera reading for 20 seconds (does not change the light):
+
+```bash
+.venv/bin/python main.py --probe
+```
+
+### macOS permissions
+
+Allow **Local Network** if macOS prompts, so Python can reach the Key Light at `http://<light>:9123/elgato/lights`. Camera access is not required. This program does not open the camera.
+
+Elgato Control Center needs to be running so the light is advertised on the network.
+
+## Windows
+
+```powershell
+git clone https://github.com/talent-collective/elgato-meeting-light.git
+cd elgato-meeting-light
+.\setup.ps1
+```
+
+Uninstall: `.\setup.ps1 -Uninstall`
+
+The startup task is `ElgatoMeetingLight` (runs at login). Logs: `elgato-light.log` in the project directory.
+
+## How it works
+
+| Part | Mechanism |
+|------|-----------|
+| Camera detection (macOS) | CoreMediaIO `kCMIODevicePropertyDeviceIsRunningSomewhere` (`gone`) on every video device from `kCMIOHardwarePropertyDevices`. `VDCAssistant` and `cameracaptured` are persistent daemons on macOS 26, so a process check stays true while the camera is off. If the CoreMediaIO call fails, the camera is treated as off. |
+| Camera detection (Windows) | Polls the webcam privacy registry (`CapabilityAccessManager`) every 2 seconds |
+| Light discovery | mDNS/Bonjour (`_elg._tcp.local.`). IPv4 is preferred |
+| Light control | `PUT http://<light-ip>:9123/elgato/lights` with only `on` set, so brightness and temperature stay as you set them |
+
+`--test` (used by install) turns the light on, then off, then sets it to the real camera state. It does not leave the light on when the camera is off.
+
+## Tests
+
+```bash
+python3 -m unittest discover -s tests -v
+```
 
 ## License
 
