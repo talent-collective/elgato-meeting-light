@@ -23,8 +23,10 @@ curl -fsSL https://raw.githubusercontent.com/talent-collective/elgato-meeting-li
 Update or reinstall. This works even if the checkout is still on an old feature branch, or has local edits. A plain `git pull` would stay on that branch. This command stashes local edits, switches to `master`, fast-forwards to `origin/master`, and runs setup. You can run it from any directory; `plutil` finds the install folder:
 
 ```bash
-cd "$(plutil -extract WorkingDirectory raw ~/Library/LaunchAgents/com.elgato-meeting-light.plist)" && git stash push && git fetch origin master && git checkout master && git merge --ff-only origin/master && bash setup.sh
+D="$(plutil -extract WorkingDirectory raw ~/Library/LaunchAgents/com.elgato-meeting-light.plist)" && [ -n "$D" ] && cd "$D" && git stash push && git fetch origin master && git checkout master && git merge --ff-only origin/master && bash setup.sh
 ```
+
+Local edits are stashed by `git stash push`, and `git stash pop` (run in the install folder) restores them.
 
 Running `setup.sh` again is safe. It installs dependencies first, then replaces the LaunchAgent, blinks the light on then off to check the connection, and leaves the light matched to the camera.
 
