@@ -73,6 +73,8 @@ The startup task is `ElgatoMeetingLight` (runs at login). Logs: `elgato-light.lo
 
 ## How it works
 
+If the camera stays in use for more than four hours, the light turns off and stays off, even while the camera is still reported in use. Turn the camera off and then on again to turn the light back on. That starts a new four-hour window.
+
 | Part | Mechanism |
 |------|-----------|
 | Camera detection (macOS) | CoreMediaIO `kCMIODevicePropertyDeviceIsRunningSomewhere` (`gone`) on every video device from `kCMIOHardwarePropertyDevices`. `VDCAssistant` and `cameracaptured` are persistent daemons on macOS 26, so a process check stays true while the camera is off. If the CoreMediaIO call fails, the camera is treated as off. |
