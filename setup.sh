@@ -1,25 +1,24 @@
 #!/usr/bin/env bash
 # Install or reinstall the Elgato meeting light on macOS.
-# Safe to run again: it replaces the LaunchAgent and syncs the light to the
-# camera (the light stays off unless the camera is actually in use).
+# Safe to run again: stop the existing agent, replace it, blink the light
+# on then off, and leave the light matched to the camera.
 set -euo pipefail
 
 PLIST_LABEL="com.elgato-meeting-light"
 PLIST_PATH="${HOME}/Library/LaunchAgents/${PLIST_LABEL}.plist"
-LOG_DIR="${HOME}/Library/Logs"
-APP_LOG="${LOG_DIR}/elgato-meeting-light.log"
-LAUNCHD_OUT="${LOG_DIR}/elgato-meeting-light.launchd.out.log"
-LAUNCHD_ERR="${LOG_DIR}/elgato-meeting-light.launchd.err.log"
 REPO_URL="https://github.com/talent-collective/elgato-meeting-light.git"
 DEFAULT_HOME="${ELGATO_MEETING_LIGHT_HOME:-${HOME}/.elgato-meeting-light}"
 
-uninstall() {
+stop_agent() {
     local domain="gui/$(id -u)"
     launchctl bootout "${domain}/${PLIST_LABEL}" 2>/dev/null || true
     launchctl unload "${PLIST_PATH}" 2>/dev/null || true
+}
+
+uninstall() {
+    stop_agent
     rm -f "${PLIST_PATH}"
     echo "Uninstalled ${PLIST_LABEL}."
-    echo "Log (left in place): ${APP_LOG}"
 }
 
 if [[ "${1:-}" == "--uninstall" ]]; then
@@ -52,6 +51,13 @@ if [[ -z "${SOURCE_DIR}" ]]; then
     exec /usr/bin/env bash "${DEFAULT_HOME}/setup.sh" "$@"
 fi
 
+# Application log is elgato-light.log (FileHandler only).
+# launchd stdout/stderr are different files so those streams are not copied
+# into the application log a second time.
+APP_LOG="${SOURCE_DIR}/elgato-light.log"
+LAUNCHD_OUT="${SOURCE_DIR}/elgato-light.launchd.out.log"
+LAUNCHD_ERR="${SOURCE_DIR}/elgato-light.launchd.err.log"
+
 BOOTSTRAP="$(command -v python3 || true)"
 if [[ -z "${BOOTSTRAP}" ]]; then
     echo "Python 3 not found. Install it with: brew install python" >&2
@@ -60,19 +66,23 @@ fi
 
 echo "Python: ${BOOTSTRAP}"
 echo "Installing into ${SOURCE_DIR}"
+
+# Stop the previous agent before the connectivity check. The old build treats
+# VDCAssistant as "camera on" and would turn the light back on after the test.
+DOMAIN="gui/$(id -u)"
+echo "Stopping any existing ${PLIST_LABEL} agent..."
+stop_agent
+sleep 0.3
+
 "${BOOTSTRAP}" -m venv "${SOURCE_DIR}/.venv"
 VENV_PY="${SOURCE_DIR}/.venv/bin/python"
+if ! "${VENV_PY}" -m pip --version >/dev/null 2>&1; then
+    "${VENV_PY}" -m ensurepip --upgrade
+fi
 "${VENV_PY}" -m pip install --upgrade pip >/dev/null 2>&1 || true
 "${VENV_PY}" -m pip install -r "${SOURCE_DIR}/requirements.txt"
 
-# Stop a previous agent before syncing, so an old build cannot turn the
-# light back on after we set it to the real camera state.
-DOMAIN="gui/$(id -u)"
-launchctl bootout "${DOMAIN}/${PLIST_LABEL}" 2>/dev/null || true
-launchctl unload "${PLIST_PATH}" 2>/dev/null || true
-sleep 0.3
-
-mkdir -p "${LOG_DIR}" "${HOME}/Library/LaunchAgents"
+mkdir -p "${HOME}/Library/LaunchAgents"
 "${VENV_PY}" - "${PLIST_PATH}" "${PLIST_LABEL}" "${VENV_PY}" "${SOURCE_DIR}/main.py" "${SOURCE_DIR}" "${LAUNCHD_OUT}" "${LAUNCHD_ERR}" <<'PY'
 import plistlib
 import sys
@@ -96,9 +106,11 @@ with open(path, "wb") as handle:
     plistlib.dump(plist, handle)
 PY
 
-echo "Syncing the light to the current camera state (stays off unless the camera is in use)..."
-if ! "${VENV_PY}" "${SOURCE_DIR}/main.py" --sync; then
-    echo "Sync reported an error. The background service will keep trying. See ${APP_LOG}" >&2
+# Blink on then off to prove the light is reachable, then leave it matched
+# to the camera. A camera that is off is not left with the light on.
+echo "Checking the light (on, then off), then matching it to the camera..."
+if ! "${VENV_PY}" "${SOURCE_DIR}/main.py" --test; then
+    echo "Light check reported an error. The background service will keep trying. See ${APP_LOG}" >&2
 fi
 
 launchctl enable "${DOMAIN}/${PLIST_LABEL}" 2>/dev/null || true
@@ -114,13 +126,11 @@ echo "Plist:       ${PLIST_PATH}"
 echo "Log:         ${APP_LOG}"
 echo "If it will not start: ${LAUNCHD_ERR}"
 echo ""
-echo "The light is on only while the camera is in use."
-echo "Running this command again reinstalls and re-syncs."
+echo "The light is on only while CoreMediaIO reports a camera running."
+echo "Live check: ${VENV_PY} ${SOURCE_DIR}/main.py --probe"
+echo "Running this script again reinstalls."
 echo ""
-echo "Permissions:"
-echo "  Local Network — allow it if macOS prompts, so Python can reach the Key Light."
-echo "  Full Disk Access — only if the log says the system log is not permitted."
-echo "    Add: ${VENV_PY}"
-echo "  Camera — do not grant it. This tool never opens the camera."
+echo "If macOS asks, allow Local Network access so Python can reach the Key Light."
+echo "Camera access is not required."
 echo ""
 echo "Uninstall: bash \"${SOURCE_DIR}/setup.sh\" --uninstall"

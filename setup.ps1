@@ -76,12 +76,12 @@ Write-Host "`nInstalling Python dependencies..."
 if ($LASTEXITCODE -ne 0) { Write-Error "pip install failed"; exit 1 }
 Write-Host "Dependencies installed."
 
-# --- Sync once ---
-# Match the light to the camera. This does not blink the light on.
-Write-Host "`nSyncing the light to the current camera state (it stays off unless the camera is in use)..."
-& $PythonExe $MainScript --sync
+# --- Connectivity check ---
+# Blinks the light on then off, then leaves it matched to the camera.
+Write-Host "`nChecking the light (on, then off), then matching it to the camera..."
+& $PythonExe $MainScript --test
 if ($LASTEXITCODE -ne 0) {
-    Write-Warning "Sync reported issues. Check elgato-light.log for details."
+    Write-Warning "Light check reported issues. Check elgato-light.log for details."
     Write-Host "Continuing with task registration anyway."
 }
 

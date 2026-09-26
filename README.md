@@ -6,42 +6,48 @@ Works on **macOS** and **Windows**. The light is discovered on the local network
 
 ## Install or reinstall on a Mac
 
-Paste this. Running it again reinstalls the background service and sets the light to match the camera (it stays **off** unless the camera is actually in use):
+From a checkout of this repo:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/talent-collective/elgato-meeting-light/master/setup.sh | bash
+bash setup.sh
 ```
 
-From a checkout of this repo, the same install is `bash setup.sh`.
+Running that again is safe. It stops the existing LaunchAgent, replaces it, blinks the light on then off to check the connection, and leaves the light matched to the camera.
 
-Uninstall:
+If you already have the repo at `~/elgato-meeting-light/elgato-meeting-light`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/talent-collective/elgato-meeting-light/master/setup.sh | bash -s -- --uninstall
+cd ~/elgato-meeting-light/elgato-meeting-light && git fetch origin cursor/fix-macos-camera-detection-ad96 && git checkout -B cursor/fix-macos-camera-detection-ad96 origin/cursor/fix-macos-camera-detection-ad96 && bash setup.sh
 ```
+
+Uninstall: `bash setup.sh --uninstall`
 
 | | |
 |---|---|
 | LaunchAgent | `com.elgato-meeting-light` |
 | Plist | `~/Library/LaunchAgents/com.elgato-meeting-light.plist` |
-| Log | `~/Library/Logs/elgato-meeting-light.log` |
-| Startup errors | `~/Library/Logs/elgato-meeting-light.launchd.err.log` |
+| Log | `elgato-light.log` in the project directory |
+| Startup errors | `elgato-light.launchd.err.log` in the project directory |
 
-The agent loads at login (`RunAtLoad`) and is restarted if it exits (`KeepAlive`). It runs the Python in `~/.elgato-meeting-light/.venv` (or the checkout's `.venv` if you installed from a clone), so launchd does not depend on your shell `PATH`.
+The agent loads at login (`RunAtLoad`) and restarts if it exits (`KeepAlive`). It runs the checkout's `.venv` Python, so launchd does not depend on your shell `PATH`.
 
-Watch camera transitions:
+Watch it:
 
 ```bash
-tail -f ~/Library/Logs/elgato-meeting-light.log
+tail -f elgato-light.log
 ```
 
-Lines look like `Camera state changed: off -> on (Frame publisher: us.zoom.xos)` and `Light ON` / `Light OFF`.
+Lines look like `Initial camera state: off`, `Camera state changed: off -> on`, and `Light ON` / `Light OFF`.
+
+Check the live camera reading for 20 seconds (does not change the light):
+
+```bash
+.venv/bin/python main.py --probe
+```
 
 ### macOS permissions
 
-- **Local Network.** Allow it if macOS prompts. The light is controlled with `PUT http://<light>:9123/elgato/lights`. Without this, discovery or the light command fails.
-- **Full Disk Access.** Not required for a normal install. If the log says the system log is not permitted, add the virtualenv Python (`~/.elgato-meeting-light/.venv/bin/python`) under System Settings → Privacy & Security → Full Disk Access, then run the install command again.
-- **Camera.** Do not grant it. This program never opens the camera. Camera access is not how state is detected, and granting it is not required.
+Allow **Local Network** if macOS prompts, so Python can reach the Key Light at `http://<light>:9123/elgato/lights`. Camera access is not required. This program does not open the camera.
 
 Elgato Control Center needs to be running so the light is advertised on the network.
 
@@ -61,48 +67,18 @@ The startup task is `ElgatoMeetingLight` (runs at login). Logs: `elgato-light.lo
 
 | Part | Mechanism |
 |------|-----------|
-| Camera detection (macOS) | Unified log via `/usr/bin/log`, not the `VDCAssistant` / `AppleCameraAssistant` processes. Those helpers stay running while the green camera dot is off, so a process check turns the light on and never sees it turn off. Current macOS (Sequoia 15 and Tahoe 26) publishes `Frame publisher cameras changed to [app: …]` while the camera is held and `changed to [:]` when it is released. Sonoma also logs Control Center `cam:` / `mic:` attributions (microphone-only sessions stay off) and, on older builds, hardware power and `kCameraStream` lines. |
-| Camera detection (Windows) | Polls the webcam privacy registry (`CapabilityAccessManager`) every 2 seconds — the same signal as the OS camera indicator |
+| Camera detection (macOS) | CoreMediaIO `kCMIODevicePropertyDeviceIsRunningSomewhere` (`gone`) on every video device from `kCMIOHardwarePropertyDevices`. `VDCAssistant` and `cameracaptured` are persistent daemons on macOS 26, so a process check stays true while the camera is off. If the CoreMediaIO call fails, the camera is treated as off. |
+| Camera detection (Windows) | Polls the webcam privacy registry (`CapabilityAccessManager`) every 2 seconds |
 | Light discovery | mDNS/Bonjour (`_elg._tcp.local.`). IPv4 is preferred |
-| Light control | `PUT http://<light-ip>:9123/elgato/lights` with `{"on": 0}` or `{"on": 1}` only, so brightness and temperature stay as you set them |
+| Light control | `PUT http://<light-ip>:9123/elgato/lights` with only `on` set, so brightness and temperature stay as you set them |
 
-Install runs one sync to that camera state. It does not blink the light on.
+`--test` (used by install) turns the light on, then off, then sets it to the real camera state. It does not leave the light on when the camera is off.
 
-## Check detection without changing the light
-
-Replay captured macOS log lines (works on any OS):
-
-```bash
-python3 main.py --sample-log tests/fixtures/macos-camera-sample.txt
-```
-
-The fixture includes a macOS 26.5 Zoom "camera on" line, the macOS 26 empty-dictionary "camera off" line `[:]`, Sonoma/Sequoia `cam:` and `mic:` attributions, and a hardware power-on echo that must not turn the light back on.
-
-On a Mac, follow the live camera and print what the light would do:
-
-```bash
-python3 main.py --dry-run
-```
-
-State-machine tests:
+## Tests
 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
-
-## Manual usage
-
-```bash
-python3 main.py --sync     # set the light once to match the camera, then exit
-python3 main.py            # run in the foreground
-```
-
-`--test` is the same as `--sync`. It does not toggle the light on and off.
-
-## Notes
-
-- If the light is unplugged, the service keeps looking for it and applies the current camera state when it reappears.
-- A missing camera log means **off**. The light is not turned on just because the service started.
 
 ## License
 

@@ -1,2 +1,4 @@
 zeroconf>=0.131.0
-requests>=2.31.0
+requests>=2.31.0,<2.33
+# urllib3 2 warns on the Command Line Tools Python, which links LibreSSL.
+urllib3>=1.26,<2
