@@ -132,7 +132,3 @@ One camera-off reading re-arms it. The next time the camera comes on, the light 
 ```bash
 python3 -m unittest discover -s tests -v
 ```
-
-## License
-
-MIT
