@@ -19,8 +19,8 @@ from camera_macos import (  # noqa: E402
     format_probe_line,
     fourcc,
     is_camera_in_use_macos,
+    light_sequence,
     snapshot_from_queries,
-    test_light_sequence,
 )
 
 
@@ -138,18 +138,20 @@ class SnapshotTests(unittest.TestCase):
 
 class LightSequenceTests(unittest.TestCase):
     def test_connectivity_check_ends_off_when_the_camera_is_off(self):
-        self.assertEqual(test_light_sequence(False), (True, False, False))
+        self.assertEqual(light_sequence(False), (True, False, False))
 
     def test_connectivity_check_ends_on_only_when_the_camera_is_on(self):
-        self.assertEqual(test_light_sequence(True), (True, False, True))
+        self.assertEqual(light_sequence(True), (True, False, True))
 
     def test_a_failed_camera_read_is_passed_in_as_off(self):
         # Callers treat a CoreMediaIO failure as False before building the sequence.
-        self.assertFalse(test_light_sequence(False)[-1])
+        self.assertFalse(light_sequence(False)[-1])
 
 
 class ProbeTests(unittest.TestCase):
-    def test_probe_reads_once_per_second(self):
+    def test_probe_reads_once_per_second_on_stdout_and_does_not_log(self):
+        import io
+
         import main
 
         calls = []
@@ -159,15 +161,45 @@ class ProbeTests(unittest.TestCase):
             return CameraSnapshot(False, (4,), ())
 
         original = main.take_camera_snapshot
+        original_stdout = sys.stdout
+        buffer = io.StringIO()
         main.take_camera_snapshot = fake
+        sys.stdout = buffer
         try:
-            with self.assertLogs("elgato-meeting-light", level="INFO") as captured:
+            with self.assertNoLogs("elgato-meeting-light", level="INFO"):
                 main.run_probe(seconds=3, pause=lambda _seconds: None)
         finally:
             main.take_camera_snapshot = original
+            sys.stdout = original_stdout
         self.assertEqual(len(calls), 3)
-        states = [line for line in captured.output if "camera_in_use=false" in line]
-        self.assertEqual(len(states), 3)
+        output = buffer.getvalue()
+        self.assertIn("Probing CoreMediaIO", output)
+        self.assertEqual(output.count("camera_in_use=false devices=1 running=none"), 3)
+
+    def test_probe_flag_does_not_open_the_application_log(self):
+        import main
+
+        ran = []
+        original_probe = main.run_probe
+        original_configure = main.configure_logging
+        original_argv = sys.argv
+
+        def fake_probe():
+            ran.append(True)
+
+        def configure_should_not_run():
+            raise AssertionError("configure_logging should not run for --probe")
+
+        main.run_probe = fake_probe
+        main.configure_logging = configure_should_not_run
+        sys.argv = ["main.py", "--probe"]
+        try:
+            main.main()
+        finally:
+            sys.argv = original_argv
+            main.run_probe = original_probe
+            main.configure_logging = original_configure
+        self.assertEqual(ran, [True])
 
 
 class LogHandlerTests(unittest.TestCase):
@@ -187,6 +219,175 @@ class LogHandlerTests(unittest.TestCase):
         # or those lines land in the same file as the FileHandler.
         self.assertEqual(len(noisy), 2)
         self.assertIs(type(noisy[1]), logging.StreamHandler)
+
+
+class PythonwStdoutTests(unittest.TestCase):
+    def _restore_root_logging(self, handlers, level):
+        root = logging.getLogger()
+        for handler in root.handlers[:]:
+            handler.close()
+            root.removeHandler(handler)
+        for handler in handlers:
+            root.addHandler(handler)
+        root.setLevel(level)
+
+    def test_configure_logging_when_stdout_is_none(self):
+        import main
+
+        root = logging.getLogger()
+        saved_handlers = root.handlers[:]
+        saved_level = root.level
+        for handler in saved_handlers:
+            root.removeHandler(handler)
+        original_stdout = sys.stdout
+        original_log_path = main.default_log_path
+        sys.stdout = None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                log_path = Path(tmp) / "elgato-light.log"
+                main.default_log_path = lambda: log_path
+                path = main.configure_logging()
+                self.assertEqual(path, log_path)
+                self.assertTrue(log_path.is_file())
+                stream_handlers = [
+                    handler
+                    for handler in root.handlers
+                    if type(handler) is logging.StreamHandler
+                ]
+                self.assertEqual(stream_handlers, [])
+                self.assertTrue(
+                    any(isinstance(handler, logging.FileHandler) for handler in root.handlers)
+                )
+        finally:
+            sys.stdout = original_stdout
+            main.default_log_path = original_log_path
+            self._restore_root_logging(saved_handlers, saved_level)
+
+    def test_run_test_when_stdout_is_none(self):
+        import main
+
+        listener = type("Listener", (), {"ip": None, "port": 9123})()
+        original_stdout = sys.stdout
+        original_wait = main._wait_for_light
+        original_camera = main.is_camera_in_use
+        original_set = main.set_light
+        original_sleep = main.time.sleep
+        sys.stdout = None
+        main._wait_for_light = lambda *args, **kwargs: None
+        main.is_camera_in_use = lambda: False
+        main.set_light = lambda *args, **kwargs: True
+        main.time.sleep = lambda *args, **kwargs: None
+        try:
+            with self.assertLogs("elgato-meeting-light", level="INFO"):
+                main.run_test(listener)
+                listener.ip = "192.0.2.5"
+                main.run_test(listener)
+        finally:
+            sys.stdout = original_stdout
+            main._wait_for_light = original_wait
+            main.is_camera_in_use = original_camera
+            main.set_light = original_set
+            main.time.sleep = original_sleep
+
+    def test_camera_match_line_is_printed_once_on_a_tty(self):
+        import io
+
+        import main
+
+        class Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        tty = Tty()
+        listener = type("Listener", (), {"ip": "192.0.2.5", "port": 9123})()
+        root = logging.getLogger()
+        saved_handlers = root.handlers[:]
+        saved_level = root.level
+        for handler in saved_handlers:
+            root.removeHandler(handler)
+        original_stdout = sys.stdout
+        original_log_path = main.default_log_path
+        original_camera = main.is_camera_in_use
+        original_set = main.set_light
+        original_sleep = main.time.sleep
+        original_wait = main._wait_for_light
+        sys.stdout = tty
+        main.is_camera_in_use = lambda: False
+        main.set_light = lambda *args, **kwargs: True
+        main.time.sleep = lambda *args, **kwargs: None
+        main._wait_for_light = lambda *args, **kwargs: None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                main.default_log_path = lambda: Path(tmp) / "elgato-light.log"
+                main.configure_logging()
+                main.run_test(listener)
+        finally:
+            sys.stdout = original_stdout
+            main.default_log_path = original_log_path
+            main.is_camera_in_use = original_camera
+            main.set_light = original_set
+            main.time.sleep = original_sleep
+            main._wait_for_light = original_wait
+            self._restore_root_logging(saved_handlers, saved_level)
+        self.assertEqual(tty.getvalue().count("Light OFF to match the camera"), 1)
+
+    def test_camera_match_line_still_prints_when_stdout_is_not_a_tty(self):
+        import io
+
+        import main
+
+        buffer = io.StringIO()
+        listener = type("Listener", (), {"ip": "192.0.2.5", "port": 9123})()
+        root = logging.getLogger()
+        saved_handlers = root.handlers[:]
+        saved_level = root.level
+        for handler in saved_handlers:
+            root.removeHandler(handler)
+        original_stdout = sys.stdout
+        original_log_path = main.default_log_path
+        original_camera = main.is_camera_in_use
+        original_set = main.set_light
+        original_sleep = main.time.sleep
+        original_wait = main._wait_for_light
+        sys.stdout = buffer
+        main.is_camera_in_use = lambda: False
+        main.set_light = lambda *args, **kwargs: True
+        main.time.sleep = lambda *args, **kwargs: None
+        main._wait_for_light = lambda *args, **kwargs: None
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                main.default_log_path = lambda: Path(tmp) / "elgato-light.log"
+                main.configure_logging()
+                main.run_test(listener)
+        finally:
+            sys.stdout = original_stdout
+            main.default_log_path = original_log_path
+            main.is_camera_in_use = original_camera
+            main.set_light = original_set
+            main.time.sleep = original_sleep
+            main._wait_for_light = original_wait
+            self._restore_root_logging(saved_handlers, saved_level)
+        self.assertEqual(buffer.getvalue().count("Light OFF to match the camera"), 1)
+
+    def test_brightness_flag_is_hidden_and_still_accepted(self):
+        import subprocess
+
+        script = Path(__file__).resolve().parents[1] / "main.py"
+        help_run = subprocess.run(
+            [sys.executable, str(script), "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(help_run.returncode, 0)
+        self.assertNotIn("brightness", help_run.stdout.lower())
+        accepted = subprocess.run(
+            [sys.executable, str(script), "--brightness", "40", "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(accepted.returncode, 0, accepted.stderr)
 
 
 if __name__ == "__main__":

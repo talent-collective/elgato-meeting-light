@@ -10,12 +10,12 @@ REPO_URL="https://github.com/talent-collective/elgato-meeting-light.git"
 DEFAULT_HOME="${ELGATO_MEETING_LIGHT_HOME:-${HOME}/.elgato-meeting-light}"
 
 stop_agent() {
-    local domain="gui/$(id -u)"
-    launchctl bootout "${domain}/${PLIST_LABEL}" 2>/dev/null || true
+    launchctl bootout "${DOMAIN}/${PLIST_LABEL}" 2>/dev/null || true
     launchctl unload "${PLIST_PATH}" 2>/dev/null || true
 }
 
 uninstall() {
+    DOMAIN="gui/$(id -u)"
     stop_agent
     rm -f "${PLIST_PATH}"
     echo "Uninstalled ${PLIST_LABEL}."
@@ -80,9 +80,11 @@ fi
 
 trap - ERR
 
-# Stop the previous agent only after install succeeded, and before --test.
-# The old build treats VDCAssistant as "camera on" and would turn the light
-# back on after the connectivity check.
+# Stop the previous agent only after install succeeded, and before --test,
+# so the connectivity check is the only process talking to the light.
+# Installs from before the CoreMediaIO camera check treated a running
+# VDCAssistant as "camera on" and could turn the light back on after that
+# check. Current builds do not; the agent is still stopped first.
 DOMAIN="gui/$(id -u)"
 echo "Stopping any existing ${PLIST_LABEL} agent..."
 stop_agent
@@ -133,7 +135,7 @@ echo "Log:         ${APP_LOG}"
 echo "If it will not start: ${LAUNCHD_ERR}"
 echo ""
 echo "The light is on only while CoreMediaIO reports a camera running."
-echo "Live check: ${VENV_PY} ${SOURCE_DIR}/main.py --probe"
+echo "Live check: \"${VENV_PY}\" \"${SOURCE_DIR}/main.py\" --probe"
 echo "Running this script again reinstalls."
 echo ""
 echo "If macOS asks, allow Local Network access so Python can reach the Key Light."

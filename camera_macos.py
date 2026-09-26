@@ -118,7 +118,7 @@ def format_probe_line(snapshot: CameraSnapshot) -> str:
     return line
 
 
-def test_light_sequence(camera_in_use: bool) -> Tuple[bool, bool, bool]:
+def light_sequence(camera_in_use: bool) -> Tuple[bool, bool, bool]:
     """Connectivity blink, then the real camera state.
 
     The last value is what the light is left at. It is on only when

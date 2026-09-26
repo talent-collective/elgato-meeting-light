@@ -4,12 +4,13 @@
     Install the Elgato meeting light controller and register it as a startup task.
 .PARAMETER Uninstall
     Remove the scheduled task instead of creating it.
-.PARAMETER Brightness
-    Light brightness 0-100 (default 80).
+.NOTES
+    Brightness and color temperature are left alone. The task starts main.py
+    with no extra arguments. main.py still accepts a hidden --brightness flag
+    so a task registered by an older installer keeps starting.
 #>
 param(
-    [switch]$Uninstall,
-    [int]$Brightness = 80
+    [switch]$Uninstall
 )
 
 $ErrorActionPreference = "Stop"
@@ -76,6 +77,14 @@ Write-Host "`nInstalling Python dependencies..."
 if ($LASTEXITCODE -ne 0) { Write-Error "pip install failed"; exit 1 }
 Write-Host "Dependencies installed."
 
+# Stop and remove the previous task before --test, so the old process is not
+# driving the light during the connectivity check. setup.sh stops the agent first
+# for the same reason.
+if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
+    Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
+}
+
 # --- Connectivity check ---
 # Blinks the light on then off, then leaves it matched to the camera.
 Write-Host "`nChecking the light (on, then off), then matching it to the camera..."
@@ -88,7 +97,7 @@ if ($LASTEXITCODE -ne 0) {
 # --- Register scheduled task ---
 $Action = New-ScheduledTaskAction `
     -Execute $PythonwExe `
-    -Argument "`"$MainScript`" --brightness $Brightness" `
+    -Argument "`"$MainScript`"" `
     -WorkingDirectory $ScriptDir
 
 $Trigger = New-ScheduledTaskTrigger -AtLogOn
@@ -103,12 +112,6 @@ $Principal = New-ScheduledTaskPrincipal `
     -UserId $env:USERNAME `
     -LogonType Interactive `
     -RunLevel Limited
-
-# Remove existing task if present
-if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
-    Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-}
 
 Register-ScheduledTask `
     -TaskName $TaskName `

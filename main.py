@@ -30,8 +30,8 @@ from auto_off import AUTO_OFF_MESSAGE, AutoOff
 from camera_macos import (
     format_probe_line,
     is_camera_in_use_macos,
+    light_sequence,
     take_camera_snapshot,
-    test_light_sequence,
 )
 
 POLL_INTERVAL = 2  # seconds between camera checks
@@ -68,10 +68,13 @@ def build_log_handlers(log_path: Path, stdout_is_tty: bool) -> List[logging.Hand
 
 def configure_logging() -> Path:
     path = default_log_path()
+    # pythonw.exe sets sys.stdout to None. Calling .isatty() on it crashes
+    # the scheduled task before the log file exists.
+    stdout_is_tty = bool(sys.stdout) and sys.stdout.isatty()
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
-        handlers=build_log_handlers(path, sys.stdout.isatty()),
+        handlers=build_log_handlers(path, stdout_is_tty),
         force=True,
     )
     return path
@@ -222,15 +225,28 @@ def _wait_for_light(listener: KeyLightListener, seconds: float = DISCOVERY_WAIT)
         time.sleep(0.5)
 
 
+def _print_stdout(message: str) -> None:
+    """Print when the process has a console.
+
+    pythonw.exe sets sys.stdout to None. print() is not safe to call then.
+    """
+    if sys.stdout is None:
+        return
+    print(message, flush=True)
+
+
 def run_probe(seconds: int = PROBE_SECONDS, pause=time.sleep) -> None:
-    """Print the live CoreMediaIO camera state once a second."""
-    log.info(
+    """Print the live CoreMediaIO camera state once a second.
+
+    Stdout only. This does not use the application log, so a 20-second
+    check does not append a burst of lines to elgato-light.log.
+    """
+    _print_stdout(
         "Probing CoreMediaIO kCMIODevicePropertyDeviceIsRunningSomewhere "
-        "for %s seconds",
-        seconds,
+        "for %s seconds" % (seconds,)
     )
     for index in range(seconds):
-        log.info(format_probe_line(take_camera_snapshot()))
+        _print_stdout(format_probe_line(take_camera_snapshot()))
         if index + 1 < seconds:
             pause(1)
 
@@ -244,7 +260,7 @@ def run_test(listener: KeyLightListener) -> None:
     _wait_for_light(listener)
     if listener.ip is None:
         log.error("Key Light not found. Make sure Elgato Control Center is running.")
-        print("Key Light not found. Not changing the light.", flush=True)
+        _print_stdout("Key Light not found. Not changing the light.")
         return
 
     log.info("Key Light at %s:%s", listener.ip, listener.port)
@@ -257,12 +273,15 @@ def run_test(listener: KeyLightListener) -> None:
     finally:
         # Always run, including after an interrupt mid-blink.
         camera_on = is_camera_in_use()
-        final_on = test_light_sequence(camera_on)[-1]
+        final_on = light_sequence(camera_on)[-1]
         log.info("Camera currently in use: %s", camera_on)
         if listener.ip and set_light(listener.ip, listener.port, on=final_on):
             message = "Light %s to match the camera" % ("ON" if final_on else "OFF")
             log.info(message)
-            print(message, flush=True)
+            # A terminal already shows this sentence via the stdout log
+            # handler. Printing it again duplicates it during setup.
+            if sys.stdout is None or not sys.stdout.isatty():
+                _print_stdout(message)
         else:
             log.error(
                 "Could not set the light to the camera state (%s)",
@@ -351,19 +370,23 @@ def main() -> None:
         action="store_true",
         help="Log camera state and the light action without sending commands to the light.",
     )
+    # Hidden on purpose. Older Windows scheduled tasks still pass
+    # --brightness. Dropping the flag would make those tasks fail at startup.
     parser.add_argument(
         "--brightness",
         type=int,
         default=None,
-        help="Ignored. Brightness and color temperature are never changed.",
+        help=argparse.SUPPRESS,
     )
     args = parser.parse_args()
 
-    log_path = configure_logging()
+    # --probe is a terminal check. Skip file logging so it does not write
+    # elgato-light.log.
     if args.probe:
         run_probe()
         return
 
+    log_path = configure_logging()
     log.info("Elgato meeting light starting (pid %s)", os.getpid())
     log.info("Log file: %s", log_path)
     if sys.platform == "darwin":
